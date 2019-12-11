@@ -1,0 +1,85 @@
+# https://knowto.org/2018/07/31/centos-nagios-dockerfile-with-a-start-script/
+#===========================
+# Dockerfile based on
+# centos latest
+#===========================
+
+
+FROM centos:latest
+LABEL project="Nagios" \
+      author="Veselin Vasilev" \
+      image_name="nagios"
+
+RUN yum update -y 
+RUN yum install -y epel-release \
+   gcc \
+   glibc \
+   glibc-common \
+   wget \
+   unzip \
+   httpd \
+   php \
+   gd \
+   gd-devel \
+   perl \
+   postfix \
+   make
+
+RUN wget -O /tmp/nagioscore.tar.gz https://github.com/NagiosEnterprises/nagioscore/archive/nagios-4.4.1.tar.gz
+WORKDIR /tmp/
+RUN tar xzf nagioscore.tar.gz
+
+WORKDIR /tmp/nagioscore-nagios-4.4.1/
+RUN ./configure
+RUN make all
+
+
+RUN make install-groups-users
+RUN usermod -a -G nagios apache 
+RUN make install
+
+RUN make install-daemoninit
+RUN systemctl enable httpd.service
+
+RUN make install-commandmode
+RUN make install-config
+RUN make install-webconf
+
+RUN htpasswd -c /usr/local/nagios/etc/htpasswd.users nagiosadmin 
+
+RUN yum install -y which \
+  gettext \
+  automake \
+  autoconf \
+  openssl-devel \
+  net-snmp \
+  net-snmp-utils
+
+RUN yum install -y perl-Net-SNMP
+
+WORKDIR /tmp
+RUN wget --no-check-certificate -O /tmp/nagios-plugins.tar.gz https://github.com/nagios-plugins/nagios-plugins/archive/release-2.2.1.tar.gz
+RUN tar zxf nagios-plugins.tar.gz
+
+WORKDIR /tmp/nagios-plugins-release-2.2.1/
+RUN ./tools/setup
+RUN ./configure
+RUN make
+RUN make install
+
+# Create a start script
+# Keep in mind that systemd magic wont work inside a container without privilege  
+# therefore we need this custom start of Nagios and Apache within the container  
+RUN echo "#!/bin/bash" >> /opt/start.sh
+RUN echo "/etc/rc.d/init.d/nagios start" >> /opt/start.sh
+RUN echo "/usr/sbin/httpd -k start" >> /opt/start.sh
+RUN echo "tail -f /var/log/httpd/access_log /var/log/httpd/error_log" >> /opt/start.sh
+RUN echo >> /opt/start.sh
+RUN chmod +x /opt/start.sh
+
+#Perform some cleanup
+RUN  yum erase gcc \
+   glibc \
+   glibc-common
+
+ENTRYPOINT ["/opt/start.sh"]
